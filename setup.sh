@@ -10,12 +10,25 @@ MAGENTA='\033[0;35m'
 RESET='\033[0m'
 SPINNER="|/-\\"
 
-LOG_DIR="/data/data/com.termux/files/usr/var/log/proxy-setup"
+LOG_DIR="/var/log/proxy-setup"
 LOG_FILE="$LOG_DIR/setup.log"
 TELEGRAM_LINK="https://t.me/rektdevelopers"
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
+
+# Check the environment
+detect_environment() {
+    if [[ -n "$(command -v termux-info)" ]]; then
+        ENV="termux"
+    elif [[ "$(uname -s)" == "Linux" ]]; then
+        ENV="linux"
+    else
+        log "${RED}Unsupported environment. Exiting.${RESET}"
+        exit 1
+    fi
+    log "${CYAN}Detected environment: $ENV${RESET}"
+}
 
 # Root check
 check_root() {
@@ -58,21 +71,31 @@ log() {
     echo -e "$1" | tee -a "$LOG_FILE"
 }
 
-# Request permissions
+# Request permissions (for Termux only)
 request_permissions() {
-    log "${YELLOW}Requesting storage permissions...${RESET}"
-    termux-setup-storage
-    sleep 2
+    if [[ "$ENV" == "termux" ]]; then
+        log "${YELLOW}Requesting storage permissions...${RESET}"
+        termux-setup-storage
+        sleep 2
+    fi
 }
 
 # Install prerequisites
 install_prerequisites() {
     log "${YELLOW}Updating packages and installing prerequisites...${RESET}"
-    pkg update -y && pkg upgrade -y &
+    if [[ "$ENV" == "termux" ]]; then
+        pkg update -y && pkg upgrade -y &
+    else
+        apt update -y && apt upgrade -y &
+    fi
     start_spinner $!
 
     log "${YELLOW}Installing essential tools...${RESET}"
-    pkg install -y curl wget git nginx apache2 openssl xdg-utils &
+    if [[ "$ENV" == "termux" ]]; then
+        pkg install -y curl wget git nginx apache2 openssl xdg-utils &
+    else
+        apt install -y curl wget git nginx apache2 openssl xdg-utils &
+    fi
     start_spinner $!
 }
 
@@ -82,7 +105,13 @@ configure_nginx() {
     read -p "Enter the domain to configure (leave blank for localhost): " domain
     domain=${domain:-localhost}
 
-    cat > $PREFIX/etc/nginx/nginx.conf <<EOL
+    if [[ "$ENV" == "termux" ]]; then
+        config_path="$PREFIX/etc/nginx/nginx.conf"
+    else
+        config_path="/etc/nginx/sites-available/default"
+    fi
+
+    cat > $config_path <<EOL
 server {
     listen 80;
     server_name ${domain};
@@ -97,7 +126,11 @@ server {
 EOL
 
     log "${GREEN}Nginx configuration complete.${RESET}"
-    nginx -s reload || nginx
+    if [[ "$ENV" == "termux" ]]; then
+        nginx -s reload || nginx
+    else
+        systemctl restart nginx
+    fi
     log "${GREEN}Nginx is now running.${RESET}"
 }
 
@@ -107,7 +140,13 @@ configure_apache() {
     read -p "Enter the domain to configure (leave blank for localhost): " domain
     domain=${domain:-localhost}
 
-    cat > $PREFIX/etc/apache2/httpd.conf <<EOL
+    if [[ "$ENV" == "termux" ]]; then
+        config_path="$PREFIX/etc/apache2/httpd.conf"
+    else
+        config_path="/etc/apache2/sites-available/000-default.conf"
+    fi
+
+    cat > $config_path <<EOL
 <VirtualHost *:80>
     ServerName ${domain}
     ProxyPreserveHost On
@@ -117,7 +156,11 @@ configure_apache() {
 EOL
 
     log "${GREEN}Apache configuration complete.${RESET}"
-    apachectl restart
+    if [[ "$ENV" == "termux" ]]; then
+        apachectl restart
+    else
+        systemctl restart apache2
+    fi
     log "${GREEN}Apache is now running.${RESET}"
 }
 
@@ -130,7 +173,11 @@ display_network_info() {
 # Open Telegram link
 open_telegram() {
     log "${BLUE}Opening Telegram link...${RESET}"
-    xdg-open "$TELEGRAM_LINK" || log "${RED}Failed to open browser. Please visit manually: $TELEGRAM_LINK${RESET}"
+    if [[ "$ENV" == "termux" ]]; then
+        xdg-open "$TELEGRAM_LINK" || log "${RED}Failed to open browser. Please visit manually: $TELEGRAM_LINK${RESET}"
+    else
+        xdg-open "$TELEGRAM_LINK" &>/dev/null || log "${RED}Failed to open browser. Please visit manually: $TELEGRAM_LINK${RESET}"
+    fi
 }
 
 # Main menu
@@ -168,6 +215,7 @@ main_menu() {
 }
 
 # Start script
+detect_environment
 check_root
 request_permissions
 main_menu
