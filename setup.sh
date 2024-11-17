@@ -6,17 +6,30 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
 RESET='\033[0m'
+SPINNER="|/-\\"
 
 LOG_DIR="/data/data/com.termux/files/usr/var/log/proxy-setup"
 LOG_FILE="$LOG_DIR/setup.log"
+TELEGRAM_LINK="https://t.me/rektdevelopers"
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
+# Root check
+check_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo -e "${RED}Error: This script must be run as root!${RESET}"
+        echo "Trying to elevate permissions..."
+        exec sudo bash "$0" "$@"
+        exit 1
+    fi
+}
+
 # Print banner
 print_banner() {
-    echo -e "${CYAN}"
+    echo -e "${MAGENTA}"
     echo "████████╗ ██████╗ ██╗  ██╗███████╗"
     echo "╚══██╔══╝██╔═══██╗██║ ██╔╝██╔════╝"
     echo "   ██║   ██║   ██║█████╔╝ █████╗  "
@@ -28,18 +41,39 @@ print_banner() {
     echo
 }
 
+# Spinner animation
+start_spinner() {
+    local pid=$1
+    while kill -0 $pid 2>/dev/null; do
+        for i in ${SPINNER}; do
+            echo -ne "\r[$i] Processing... "
+            sleep 0.1
+        done
+    done
+    echo -ne "\r[✔] Done!                   \n"
+}
+
 # Log a message
 log() {
     echo -e "$1" | tee -a "$LOG_FILE"
 }
 
+# Request permissions
+request_permissions() {
+    log "${YELLOW}Requesting storage permissions...${RESET}"
+    termux-setup-storage
+    sleep 2
+}
+
 # Install prerequisites
 install_prerequisites() {
-    log "${YELLOW}Updating packages...${RESET}"
-    pkg update -y && pkg upgrade -y
+    log "${YELLOW}Updating packages and installing prerequisites...${RESET}"
+    pkg update -y && pkg upgrade -y &
+    start_spinner $!
 
     log "${YELLOW}Installing essential tools...${RESET}"
-    pkg install -y curl wget git nginx apache2 openssl
+    pkg install -y curl wget git nginx apache2 openssl xdg-utils &
+    start_spinner $!
 }
 
 # Configure Nginx
@@ -90,36 +124,50 @@ EOL
 # Display network information
 display_network_info() {
     log "${CYAN}Fetching local IPs...${RESET}"
-    ip addr show | grep "inet " | awk '{print $2}' | cut -d/ -f1
+    ip addr show | grep "inet " | awk '{print $2}' | cut -d/ -f1 || log "${RED}Failed to fetch IPs.${RESET}"
+}
+
+# Open Telegram link
+open_telegram() {
+    log "${BLUE}Opening Telegram link...${RESET}"
+    xdg-open "$TELEGRAM_LINK" || log "${RED}Failed to open browser. Please visit manually: $TELEGRAM_LINK${RESET}"
 }
 
 # Main menu
 main_menu() {
-    print_banner
-    install_prerequisites
-
     while true; do
+        clear
+        print_banner
+
         echo -e "${BLUE}Choose an option:${RESET}"
-        echo "1. Configure Nginx"
-        echo "2. Configure Apache"
-        echo "3. Display network info"
-        echo "4. Exit"
-        read -p "Enter your choice [1-4]: " choice
+        echo "1. Install Prerequisites"
+        echo "2. Configure Nginx"
+        echo "3. Configure Apache"
+        echo "4. Display Network Info"
+        echo "5. Exit"
+        read -p "Enter your choice [1-5]: " choice
 
         case $choice in
-            1) configure_nginx ;;
-            2) configure_apache ;;
-            3) display_network_info ;;
-            4) 
+            1) install_prerequisites ;;
+            2) configure_nginx ;;
+            3) configure_apache ;;
+            4) display_network_info ;;
+            5) 
+                log "${GREEN}Setup complete. Redirecting you to Telegram...${RESET}"
+                open_telegram
                 log "${GREEN}Exiting setup.${RESET}"
                 exit 0
                 ;;
-            *)
+            *) 
                 log "${RED}Invalid choice. Please try again.${RESET}"
+                sleep 1
                 ;;
         esac
+        read -p "Press Enter to return to the menu..." dummy
     done
 }
 
-# Start the script
+# Start script
+check_root
+request_permissions
 main_menu
